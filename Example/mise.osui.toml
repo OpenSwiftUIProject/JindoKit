@@ -1,0 +1,5 @@
+[tools]
+tuist = "4.206.0-rc.1"
+
+[env]
+JINDOKIT_OPENSWIFTUI = "1"

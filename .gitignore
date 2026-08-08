@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+Derived/
+Package.resolved
+Example/.package.resolved
+Example/*.xcodeproj/
+Example/*.xcworkspace/
+# Local screenshot capture output
+Example/Screenshots/
