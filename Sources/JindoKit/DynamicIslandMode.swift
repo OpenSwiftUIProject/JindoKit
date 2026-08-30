@@ -1,4 +1,4 @@
-#if OpenSwiftUI
+#if OpenSwiftUI_NO_SPI || OpenSwiftUI_SPI
 import OpenSwiftUI
 #else
 import SwiftUI

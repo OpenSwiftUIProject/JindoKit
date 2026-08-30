@@ -1,9 +1,7 @@
-#if OpenSwiftUI
+#if OpenSwiftUI_NO_SPI || OpenSwiftUI_SPI
 import OpenSwiftUI
-internal import OpenSwiftUI_SPI
 #else
 import SwiftUI
-internal import SwiftUI_SPI
 #endif
 
 /// A view that previews the layout and configuration of a Live Activity in the

@@ -1,12 +1,48 @@
 import Foundation
 import ProjectDescription
 
-let usesOpenSwiftUI =
-    ProcessInfo.processInfo.environment["JINDOKIT_OPENSWIFTUI"] == "1"
+enum JindoKitBackend: String, CaseIterable {
+    case swiftUINoSPI = "SwiftUI_NO_SPI"
+    case swiftUISPI = "SwiftUI_SPI"
+    case openSwiftUINoSPI = "OpenSwiftUI_NO_SPI"
+    case openSwiftUISPI = "OpenSwiftUI_SPI"
 
-let jindoKitTraits: Set<Package.Dependency.Trait> = usesOpenSwiftUI
-    ? ["OpenSwiftUI"]
-    : [.defaults]
+    var environmentKey: String {
+        "JINDOKIT_\(rawValue.uppercased())"
+    }
+
+    var packageTrait: Package.Dependency.Trait {
+        .init(name: rawValue)
+    }
+
+    var usesOpenSwiftUI: Bool {
+        switch self {
+        case .openSwiftUINoSPI, .openSwiftUISPI:
+            true
+        case .swiftUINoSPI, .swiftUISPI:
+            false
+        }
+    }
+
+    static func selected(in environment: [String: String]) -> Self {
+        let selected = allCases.filter {
+            environment[$0.environmentKey] == "1"
+        }
+        guard selected.count <= 1 else {
+            let keys = selected.map(\.environmentKey).joined(separator: ", ")
+            fatalError("Set at most one JindoKit backend environment key: \(keys)")
+        }
+        return selected.first ?? .swiftUINoSPI
+    }
+}
+
+let selectedBackend = JindoKitBackend.selected(
+    in: ProcessInfo.processInfo.environment
+)
+let usesOpenSwiftUI = selectedBackend.usesOpenSwiftUI
+let jindoKitTraits: Set<Package.Dependency.Trait> = [
+    selectedBackend.packageTrait,
+]
 
 let packages: [Package.Dependency] = [
     .package(path: "..", traits: jindoKitTraits),
@@ -197,6 +233,9 @@ let project = Project(
         "README.md",
         "Scripts/**",
         "mise.toml",
+        "mise.sui-no-spi.toml",
+        "mise.sui.toml",
+        "mise.osui-no-spi.toml",
         "mise.osui.toml",
         "setup.sh",
     ]

@@ -2,4 +2,4 @@
 tuist = "4.206.0-rc.1"
 
 [env]
-JINDOKIT_OPENSWIFTUI = "1"
+JINDOKIT_OPENSWIFTUI_SPI = "1"

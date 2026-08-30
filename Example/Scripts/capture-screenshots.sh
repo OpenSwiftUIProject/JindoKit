@@ -24,7 +24,12 @@ cleanup() {
 }
 trap 'cleanup $?' EXIT
 
-"$example_directory/setup.sh"
+env \
+    -u JINDOKIT_SWIFTUI_NO_SPI \
+    -u JINDOKIT_SWIFTUI_SPI \
+    -u JINDOKIT_OPENSWIFTUI_NO_SPI \
+    -u JINDOKIT_OPENSWIFTUI_SPI \
+    "$example_directory/setup.sh"
 
 xcodebuild -quiet \
     -workspace "$example_directory/JindoKitExample.xcworkspace" \

@@ -1,4 +1,4 @@
-#if OpenSwiftUI
+#if OpenSwiftUI_NO_SPI || OpenSwiftUI_SPI
 import OpenSwiftUI
 #else
 import SwiftUI
@@ -19,7 +19,7 @@ struct DynamicIslandAPITests {
         #expect(type(of: island) == DynamicIsland.self)
     }
 
-    #if !OpenSwiftUI
+    #if SwiftUI_NO_SPI || SwiftUI_SPI
     @MainActor
     @Test
     func everyPresentationRenders() {

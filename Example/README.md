@@ -1,18 +1,37 @@
 # JindoKit integration example
 
 This Tuist project renders the same Dynamic Island content with JindoKit in
-the App and WidgetKit in a Live Activity Extension. Both App backends embed the
-same WidgetKit Extension and can start a real Live Activity.
+the App and WidgetKit in a Live Activity Extension. Every configuration embeds
+the same WidgetKit Extension and can start a real Live Activity.
 
 ## Generate
 
-Generate the default SwiftUI configuration:
+Generate the default SwiftUI configuration, which uses JindoKit's open source
+implementation of the Jindo layout without linking `SwiftUI_SPI`:
 
 ```sh
 ./setup.sh
 ```
 
-Generate the OpenSwiftUI configuration instead:
+Generate the same SwiftUI configuration through its explicit environment:
+
+```sh
+./setup.sh --sui-no-spi
+```
+
+Generate the system SwiftUI SPI configuration for compatibility comparisons:
+
+```sh
+./setup.sh --sui
+```
+
+Generate the OpenSwiftUI open source configuration:
+
+```sh
+./setup.sh --osui-no-spi
+```
+
+Generate the OpenSwiftUI SPI configuration instead:
 
 ```sh
 ./setup.sh --osui
@@ -44,5 +63,5 @@ DESTINATION='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
   ./Scripts/capture-screenshots.sh
 ```
 
-The screenshot target is available only in the default SwiftUI configuration.
-The capture script switches to that configuration automatically.
+The screenshot target is available in the SwiftUI configurations. The capture
+script switches to the default SwiftUI configuration automatically.
