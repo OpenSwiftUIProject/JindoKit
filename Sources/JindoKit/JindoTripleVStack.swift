@@ -110,6 +110,19 @@ private extension EdgeInsets {
 }
 
 private extension CGRect {
+    var center: CGPoint {
+        CGPoint(x: origin.x + width / 2, y: origin.y + height / 2)
+    }
+
+    init(center: CGPoint, size: CGSize) {
+        self.init(
+            x: center.x - size.width * 0.5,
+            y: center.y - size.height * 0.5,
+            width: size.width,
+            height: size.height
+        )
+    }
+
     func inset(by insets: EdgeInsets) -> CGRect {
         guard !isNull else {
             return self
@@ -123,6 +136,16 @@ private extension CGRect {
             return .null
         }
         return result
+    }
+}
+
+private extension Axis {
+    var otherAxis: Axis {
+        self == .horizontal ? .vertical : .horizontal
+    }
+
+    var perpendicularEdges: (min: Edge, max: Edge) {
+        self == .vertical ? (.top, .bottom) : (.leading, .trailing)
     }
 }
 
@@ -440,7 +463,7 @@ extension JindoTripleVStack.Position {
     /// - Parameter inset: An optional inset from the trailing edge.
     /// - Returns: A position in the trailing region.
     static func trailing(inset: CGFloat? = nil) -> JindoTripleVStack.Position {
-        JindoTripleVStack.Position(region: .trailing, trailingInset: inset)
+        JindoTripleVStack.Position(region: .trailing, leadingInset: inset)
     }
 
     /// The center region of the layout.
@@ -630,18 +653,21 @@ extension JindoTripleVStack {
         var groups: [Group]
 
         var allGroups: [Group] {
-            [Group(count: 0, proposed: reserved.before)]
-                + groups
-                + [Group(count: 0, proposed: reserved.after)]
+            var result: [Group] = []
+            result.reserveCapacity(groups.count + 2)
+            result.append(Group(count: 0, proposed: reserved.before))
+            result.append(contentsOf: groups)
+            result.append(Group(count: 0, proposed: reserved.after))
+            return result
         }
 
         mutating func updateWithSplit(at index: Int, before: CGFloat) {
             if index == 0 {
-                reserved.before = max(reserved.before, before)
+                reserved.before = max(before, reserved.before)
                 let group = groups[0]
                 groups[0] = Group(
                     count: group.count,
-                    proposed: group.proposed.map { max($0 - before, 0) }
+                    proposed: group.proposed.map { max(0, $0 - before) }
                 )
                 return
             }
@@ -668,7 +694,7 @@ extension JindoTripleVStack {
                 if remainingCount == group.count {
                     groups[groupIndex] = Group(
                         count: group.count,
-                        proposed: group.proposed.map { max(remainingBefore, $0) }
+                        proposed: group.proposed.map { max($0, remainingBefore) }
                     )
                     return
                 }
@@ -681,7 +707,7 @@ extension JindoTripleVStack {
                     Group(
                         count: group.count - remainingCount,
                         proposed: group.proposed.map {
-                            max($0 - remainingBefore, 0)
+                            max(0, $0 - remainingBefore)
                         }
                     ),
                     at: groupIndex + 1
@@ -714,14 +740,14 @@ extension JindoTripleVStack {
             accumulatedInternalSpacing.reserveCapacity(indices.count)
 
             let baseEdges: Edge.Set
-            if horizontalFullWidth {
-                baseEdges = .horizontal
+            if stack == .center {
+                baseEdges = []
+            } else if horizontalFullWidth {
+                baseEdges = [.leading, .trailing]
             } else if stack == .leading {
                 baseEdges = .leading
-            } else if stack == .trailing {
-                baseEdges = .trailing
             } else {
-                baseEdges = []
+                baseEdges = .trailing
             }
 
             var previousIndex = 0
@@ -801,6 +827,23 @@ extension JindoTripleVStack {
                 }
             }
         }
+
+        func forEach(_ body: (Stack, A) -> Void) {
+            for stack in Stack.allCases {
+                body(stack, self[stack])
+            }
+        }
+
+        func compactMap<T>(_ transform: (Stack, A) -> T?) -> [T] {
+            var result: [T] = []
+            result.reserveCapacity(3)
+            for stack in Stack.allCases {
+                if let value = transform(stack, self[stack]) {
+                    result.append(value)
+                }
+            }
+            return result
+        }
     }
 
     fileprivate struct FixedProposal: Equatable {
@@ -848,24 +891,6 @@ extension JindoTripleVStack {
         var min: CGFloat?
 
         var max: CGFloat?
-
-        mutating func getMin(_ makeValue: () -> CGFloat) -> CGFloat {
-            guard let min else {
-                let min = makeValue()
-                self.min = min
-                return min
-            }
-            return min
-        }
-
-        mutating func getMax(_ makeValue: () -> CGFloat) -> CGFloat {
-            guard let max else {
-                let max = makeValue()
-                self.max = max
-                return max
-            }
-            return max
-        }
     }
 
     private struct ProposedMetrics {
@@ -908,37 +933,32 @@ extension JindoTripleVStack {
                 0,
                 halfRemainder - trailingCenterSpacing
             )
-            let availableWidth = max(
-                0,
-                proposal.width - (fullWidth ? 0 : leadingTrailingSpacing)
-            )
-
-            let leadingWidth: CGFloat
-            let trailingWidth: CGFloat
-            if fullWidth {
-                if horizontalSizing == .leading {
-                    leadingWidth = availableWidth
-                    trailingWidth = 0
+            let widths: (leading: CGFloat, trailing: CGFloat) = {
+                let availableWidth = max(
+                    0,
+                    proposal.width - (fullWidth ? 0 : leadingTrailingSpacing)
+                )
+                if fullWidth {
+                    if horizontalSizing == .leading {
+                        return (availableWidth, 0)
+                    } else if horizontalSizing == .trailing {
+                        return (0, availableWidth)
+                    } else {
+                        let halfWidth = max(0, availableWidth / 2)
+                        return (halfWidth, halfWidth)
+                    }
                 } else if horizontalSizing == .trailing {
-                    leadingWidth = 0
-                    trailingWidth = availableWidth
+                    return (leadingAvailableWidth, max(0, availableWidth - leadingAvailableWidth))
+                } else if horizontalSizing == .leading {
+                    return (max(0, availableWidth - trailingAvailableWidth), trailingAvailableWidth)
                 } else {
-                    leadingWidth = availableWidth / 2
-                    trailingWidth = availableWidth / 2
+                    let halfWidth = max(0, availableWidth / 2)
+                    return (halfWidth, halfWidth)
                 }
-            } else if horizontalSizing == .leading {
-                leadingWidth = max(0, availableWidth - trailingAvailableWidth)
-                trailingWidth = trailingAvailableWidth
-            } else if horizontalSizing == .trailing {
-                leadingWidth = leadingAvailableWidth
-                trailingWidth = max(0, availableWidth - leadingAvailableWidth)
-            } else {
-                leadingWidth = availableWidth / 2
-                trailingWidth = availableWidth / 2
-            }
+            }()
 
-            self.leadingWidth = leadingWidth
-            self.trailingWidth = trailingWidth
+            self.leadingWidth = widths.leading
+            self.trailingWidth = widths.trailing
             self.centerWidth = centerWidth
             self.fullWidth = max(0, proposal.width)
             self.leadingAvailableWidth = leadingAvailableWidth
@@ -961,10 +981,12 @@ extension JindoTripleVStack {
             }
 
             let leadingIndices = indices(in: .leading)
-            let centerIndices = indices(in: .center)
             let trailingIndices = indices(in: .trailing)
+            let centerIndices = indices(in: .center)
             let bottomIndices = indices(in: .bottom)
-            let notchIndex = indices(in: .notch).first
+            let notchIndices = indices(in: .notch)
+            assert(notchIndices.count <= 1, "JindoTripleVStack supports at most one notch subview")
+            let notchIndex = notchIndices.first
 
             header = Header(
                 configuration: configuration,
@@ -1034,12 +1056,10 @@ extension JindoTripleVStack {
             let configuredSizing = header.configuration.horizontalSizing
             let horizontalSizing: HorizontalSizing
             if configuredSizing == .automatic {
-                let leadingPriority = header.stacks.leading.indices
-                    .prefix(header.stacks.leading.topPrefix)
+                let leadingPriority = header.stacks.leading.indices[..<header.stacks.leading.topPrefix]
                     .compactMap { header.proxies[$0][PriorityKey.self] }
                     .max() ?? 0
-                let trailingPriority = header.stacks.trailing.indices
-                    .prefix(header.stacks.trailing.topPrefix)
+                let trailingPriority = header.stacks.trailing.indices[..<header.stacks.trailing.topPrefix]
                     .compactMap { header.proxies[$0][PriorityKey.self] }
                     .max() ?? 0
 
@@ -1067,8 +1087,9 @@ extension JindoTripleVStack {
         }
 
         private mutating func makeChildren() {
-            children.reserveCapacity(header.proxies.count)
-            fittingOrder.reserveCapacity(header.proxies.count)
+            let count = header.proxies.count
+            children.reserveCapacity(count)
+            fittingOrder.reserveCapacity(count)
 
             for index in header.proxies.indices {
                 children.append(
@@ -1095,17 +1116,17 @@ extension JindoTripleVStack {
                 fittingOrder.append(index)
             }
 
+            var stacks = header.stacks
             for stack in Stack.allCases {
-                var stackHeader = header.stacks[stack]
-                stackHeader.computeSpacingAndPadding(
+                stacks[stack].computeSpacingAndPadding(
                     stack: stack,
                     layoutMargins: header.configuration.layoutMargins,
                     horizontalFullWidth: header.horizontalFullWidth,
                     proxies: header.proxies,
                     children: &children
                 )
-                header.stacks[stack] = stackHeader
             }
+            header.stacks = stacks
         }
 
         private mutating func sizeAndPlaceChildren(
@@ -1143,8 +1164,7 @@ extension JindoTripleVStack {
                     - 2 * max(leadingMinWidth, trailingMinWidth)
                     - centerSpacingWidth
             )
-            let centerWidth = header.stacks.center.indices
-                .prefix(header.stacks.center.topPrefix)
+            let centerWidth = header.stacks.center.indices[..<header.stacks.center.topPrefix]
                 .map {
                     header.proxies[$0].sizeThatFits(
                         ProposedViewSize(
@@ -1166,24 +1186,16 @@ extension JindoTripleVStack {
                 proposal: proposal
             )
 
-            for index in header.stacks.leading.indices
-                .prefix(header.stacks.leading.topPrefix)
-            {
+            for index in header.stacks.leading.indices[..<header.stacks.leading.topPrefix] {
                 children[index].width = metrics.leadingWidth
             }
-            for index in header.stacks.center.indices
-                .prefix(header.stacks.center.topPrefix)
-            {
+            for index in header.stacks.center.indices[..<header.stacks.center.topPrefix] {
                 children[index].width = metrics.centerWidth
             }
-            for index in header.stacks.trailing.indices
-                .prefix(header.stacks.trailing.topPrefix)
-            {
+            for index in header.stacks.trailing.indices[..<header.stacks.trailing.topPrefix] {
                 children[index].width = metrics.trailingWidth
             }
-            for index in header.stacks.leading.indices
-                .dropFirst(header.stacks.leading.topPrefix)
-            {
+            for index in header.stacks.leading.indices[header.stacks.leading.topPrefix...] {
                 children[index].width = metrics.fullWidth
             }
 
@@ -1210,53 +1222,48 @@ extension JindoTripleVStack {
 
             if let bounds {
                 place(
-                    indices: header.stacks.leading.indices
-                        .prefix(header.stacks.leading.topPrefix),
+                    indices: header.stacks.leading.indices[..<header.stacks.leading.topPrefix],
                     of: .leading,
                     minorAxisAnchor: 0,
                     bounds: bounds
                 )
                 place(
-                    indices: header.stacks.trailing.indices
-                        .prefix(header.stacks.trailing.topPrefix),
+                    indices: header.stacks.trailing.indices[..<header.stacks.trailing.topPrefix],
                     of: .trailing,
                     minorAxisAnchor: 1,
                     bounds: bounds
                 )
 
                 let centerBounds = CGRect(
-                    x: bounds.midX - header.configuration.notchSize.width / 2,
-                    y: bounds.minY,
-                    width: header.configuration.notchSize.width,
-                    height: bounds.height
+                    center: bounds.center,
+                    size: CGSize(
+                        width: header.configuration.notchSize.width,
+                        height: bounds.height
+                    )
                 )
                 place(
-                    indices: header.stacks.center.indices
-                        .prefix(header.stacks.center.topPrefix),
+                    indices: header.stacks.center.indices[..<header.stacks.center.topPrefix],
                     of: .center,
                     minorAxisAnchor: header.configuration.centerAlignment._jindoValue,
                     bounds: centerBounds
                 )
                 place(
-                    indices: header.stacks.leading.indices
-                        .suffix(from: header.stacks.leading.topPrefix),
+                    indices: header.stacks.leading.indices[header.stacks.leading.topPrefix...],
                     of: .leading,
                     minorAxisAnchor: header.configuration.bottomAlignment._jindoValue,
                     bounds: bounds
                 )
 
                 if let notchIndex = header.notchIndex {
-                    var notchChild = children[notchIndex]
                     resize(
-                        &notchChild,
+                        &children[notchIndex],
                         proposal: ProposedViewSize(
                             width: header.configuration.notchSize.width,
                             height: header.configuration.notchSize.height
                         ),
                         proxy: header.proxies[notchIndex]
                     )
-                    children[notchIndex] = notchChild
-                    var geometry = notchChild.geometry
+                    var geometry = children[notchIndex].geometry
                     geometry.origin.x = bounds.midX - geometry.size.width / 2
                     geometry.origin.y = bounds.minY
                         - header.configuration.layoutMargins.top
@@ -1293,7 +1300,7 @@ extension JindoTripleVStack {
         }
 
         private mutating func prioritize(resetCache: Bool) {
-            guard !fittingOrder.isEmpty else {
+            guard !children.isEmpty else {
                 return
             }
 
@@ -1303,55 +1310,69 @@ extension JindoTripleVStack {
                 }
             }
 
-            var order = fittingOrder
+            func majorAxisLength(
+                ofChild index: Int,
+                forMajorProposal proposal: CGFloat
+            ) -> CGFloat {
+                header.proxies[index]._jindoLengthThatFits(
+                    ProposedViewSize(proposal, in: .vertical, by: children[index].width),
+                    in: .vertical
+                )
+            }
+
+            func majorAxisMin(ofChild index: Int) -> CGFloat {
+                if let min = children[index].majorAxisRangeCache.min {
+                    return min
+                }
+                let min = majorAxisLength(ofChild: index, forMajorProposal: 0)
+                children[index].majorAxisRangeCache.min = min
+                return min
+            }
+
+            func majorAxisMax(ofChild index: Int) -> CGFloat {
+                if let max = children[index].majorAxisRangeCache.max {
+                    return max
+                }
+                let max = majorAxisLength(ofChild: index, forMajorProposal: .infinity)
+                children[index].majorAxisRangeCache.max = max
+                return max
+            }
+
             func areInDecreasingFittingPriority(_ index0: Int, _ index1: Int) -> Bool {
                 let priority0 = children[index0].layoutPriority
                 let priority1 = children[index1].layoutPriority
-                guard priority0 == priority1 else {
-                    return priority0 > priority1
+                if priority1 < priority0 {
+                    return true
                 }
-
-                let width0 = children[index0].width
-                let min0 = children[index0].majorAxisRangeCache.getMin {
-                    header.proxies[index0]._jindoLengthThatFits(
-                        ProposedViewSize(0, in: .vertical, by: width0),
-                        in: .vertical
-                    )
-                }
-                let max0 = children[index0].majorAxisRangeCache.getMax {
-                    header.proxies[index0]._jindoLengthThatFits(
-                        ProposedViewSize(.infinity, in: .vertical, by: width0),
-                        in: .vertical
-                    )
-                }
-                let width1 = children[index1].width
-                let min1 = children[index1].majorAxisRangeCache.getMin {
-                    header.proxies[index1]._jindoLengthThatFits(
-                        ProposedViewSize(0, in: .vertical, by: width1),
-                        in: .vertical
-                    )
-                }
-                let max1 = children[index1].majorAxisRangeCache.getMax {
-                    header.proxies[index1]._jindoLengthThatFits(
-                        ProposedViewSize(.infinity, in: .vertical, by: width1),
-                        in: .vertical
-                    )
+                if priority0 < priority1 {
+                    return false
                 }
                 let estimate0 = JindoFlexibilityEstimate(
-                    minLength: min0,
-                    maxLength: max0
+                    minLength: majorAxisMin(ofChild: index0),
+                    maxLength: majorAxisMax(ofChild: index0)
                 )
                 let estimate1 = JindoFlexibilityEstimate(
-                    minLength: min1,
-                    maxLength: max1
+                    minLength: majorAxisMin(ofChild: index1),
+                    maxLength: majorAxisMax(ofChild: index1)
                 )
-                return estimate0 < estimate1
+                if estimate0 < estimate1 {
+                    return true
+                }
+                if estimate0 > estimate1 {
+                    return false
+                }
+                return index0 < index1
             }
 
+            func slowPath(_ order: inout [Int]) {
+                order.sort(by: areInDecreasingFittingPriority)
+            }
+
+            var order = fittingOrder
             if order.count <= 32 {
                 order.insertionSort(by: areInDecreasingFittingPriority)
             } else {
-                order.sort(by: areInDecreasingFittingPriority)
+                slowPath(&order)
             }
             fittingOrder = order
 
@@ -1364,21 +1385,17 @@ extension JindoTripleVStack {
                 guard children[childIndex].majorAxisRangeCache.min == nil else {
                     continue
                 }
-                children[childIndex].majorAxisRangeCache.min =
-                    header.proxies[childIndex]._jindoLengthThatFits(
-                        ProposedViewSize(
-                            0,
-                            in: .vertical,
-                            by: children[childIndex].width
-                        ),
-                        in: .vertical
-                    )
+                children[childIndex].majorAxisRangeCache.min = majorAxisLength(
+                    ofChild: childIndex,
+                    forMajorProposal: 0
+                )
             }
         }
 
         private func spacing(_ stack: Stack, axis: Axis) -> ViewSpacing {
             let stackHeader = header.stacks[stack]
-            guard !stackHeader.indices.isEmpty else {
+            let topIndices = stackHeader.indices[..<stackHeader.topPrefix]
+            guard !topIndices.isEmpty else {
                 var spacing = ViewSpacing.zero
                 if let proxy = header.proxies.first {
                     spacing.formUnion(proxy.spacing, edges: [])
@@ -1386,14 +1403,13 @@ extension JindoTripleVStack {
                 return spacing
             }
             var spacing = ViewSpacing()
-            for (offset, index) in stackHeader.indices.enumerated() {
-                var edges: Edge.Set = axis == .horizontal ? .vertical : .horizontal
-                if offset == 0 {
-                    edges.insert(axis == .horizontal ? .leading : .top)
-                }
-                if offset == stackHeader.indices.count - 1 {
-                    edges.insert(axis == .horizontal ? .trailing : .bottom)
-                }
+            for index in topIndices {
+                let edges: Edge.Set = [
+                    Edge.Set(axis.perpendicularEdges.min),
+                    Edge.Set(axis.perpendicularEdges.max),
+                    index == topIndices.first ? Edge.Set(axis.otherAxis.perpendicularEdges.min) : [],
+                    index == topIndices.last ? Edge.Set(axis.otherAxis.perpendicularEdges.max) : [],
+                ]
                 spacing.formUnion(header.proxies[index].spacing, edges: edges)
             }
             return spacing
@@ -1404,13 +1420,9 @@ extension JindoTripleVStack {
             in proposal: FixedProposal
         ) -> CGFloat {
             let stackHeader = header.stacks[stack]
-            return stackHeader.indices
-                .prefix(stackHeader.topPrefix)
+            return stackHeader.indices[..<stackHeader.topPrefix]
                 .lazy
-                .filter {
-                    header.proxies[$0][VerticalPlacementKey.self]
-                        != .belowNotchIfTooWide
-                }
+                .prefix(while: { !shouldPushBelowIfTooWide($0) })
                 .map {
                     header.proxies[$0].sizeThatFits(
                         ProposedViewSize(width: 0, height: proposal.height)
@@ -1454,12 +1466,12 @@ extension JindoTripleVStack {
                 includeSpacing: false
             )
             let leadingIndex = indexToPushBelowNotch(
-                in: .leading,
+                .leading,
                 availableWidth: metrics.leadingAvailableWidth,
                 centerHeight: centerHeight
             )
             let trailingIndex = indexToPushBelowNotch(
-                in: .trailing,
+                .trailing,
                 availableWidth: metrics.trailingAvailableWidth,
                 centerHeight: centerHeight
             )
@@ -1598,12 +1610,12 @@ extension JindoTripleVStack {
                 }
                 for orderIndex in adjustmentIndices {
                     let childIndex = fittingOrder[orderIndex]
-                    let minimum = children[childIndex].majorAxisRangeCache.min!
                     for stack in Stack.allCases {
                         guard let stateIndex = children[childIndex].majorAxisGroup[stack]
                         else {
                             continue
                         }
+                        let minimum = children[childIndex].majorAxisRangeCache.min!
                         states[stateIndex].totalAvailable = states[stateIndex]
                             .totalAvailable.map {
                                 subtractMinimum ? $0 - minimum : $0 + minimum
@@ -1625,20 +1637,18 @@ extension JindoTripleVStack {
 
                 for orderIndex in batchStart ..< batchEnd {
                     let childIndex = fittingOrder[orderIndex]
-                    var availableShares: [CGFloat] = []
-                    for stack in Stack.allCases {
-                        guard let stateIndex = children[childIndex].majorAxisGroup[stack],
-                              let totalAvailable = states[stateIndex].totalAvailable
-                        else {
-                            continue
-                        }
-                        availableShares.append(
-                            max(
-                                totalAvailable / CGFloat(states[stateIndex].unsizedCount),
-                                0
+                    let availableShares = children[childIndex].majorAxisGroup
+                        .compactMap { _, stateIndex -> CGFloat? in
+                            guard let stateIndex,
+                                  let totalAvailable = states[stateIndex].totalAvailable
+                            else {
+                                return nil
+                            }
+                            return max(
+                                0,
+                                totalAvailable / CGFloat(states[stateIndex].unsizedCount)
                             )
-                        )
-                    }
+                        }
 
                     let childProposal = ProposedViewSize(
                         availableShares.min(),
@@ -1679,13 +1689,12 @@ extension JindoTripleVStack {
                     sharedTopPrefixPosition = max(
                         sharedTopPrefixPosition,
                         stackExtents[stack]
-                            + distanceToPrevious(state.range.lowerBound, stack: stack)
+                            + distanceToPrevious(stackHeader.topPrefix, stack: stack)
                     )
                 }
 
                 var layoutHeight: CGFloat = 0
-                for offset in state.range {
-                    let childIndex = stackHeader.indices[offset]
+                for childIndex in stackHeader.indices[state.range] {
                     layoutHeight += children[childIndex].distanceToPrevious[stack]!
                     layoutHeight += children[childIndex].geometry.size.height
                 }
@@ -1711,9 +1720,10 @@ extension JindoTripleVStack {
                     } else {
                         firstSpacing = 0
                     }
-                    adjustedExtents[stack] = sharedTopPrefixPosition - firstSpacing
+                    state.currentMajorAxisPosition = sharedTopPrefixPosition - firstSpacing
+                } else {
+                    state.currentMajorAxisPosition = adjustedExtents[stack]
                 }
-                state.currentMajorAxisPosition = adjustedExtents[stack]
                 adjustedExtents[stack] += max(
                     state.minHeight ?? 0,
                     state.layoutHeight
@@ -1728,17 +1738,14 @@ extension JindoTripleVStack {
                     continue
                 }
 
-                var positions: [CGFloat] = []
-                for stack in Stack.allCases {
-                    guard let stateIndex = children[childIndex].majorAxisGroup[stack]
-                    else {
-                        continue
-                    }
-                    positions.append(
-                        children[childIndex].distanceToPrevious[stack]!
+                let positions = children[childIndex].majorAxisGroup
+                    .compactMap { stack, stateIndex -> CGFloat? in
+                        guard let stateIndex else {
+                            return nil
+                        }
+                        return children[childIndex].distanceToPrevious[stack]!
                             + states[stateIndex].currentMajorAxisPosition
-                    )
-                }
+                    }
                 let position = positions.max() ?? 0
                 children[childIndex].geometry.origin.y = position
                 let bottom = position + children[childIndex].geometry.size.height
@@ -1759,9 +1766,9 @@ extension JindoTripleVStack {
             var result: [MajorAxisGroupState] = []
             result.reserveCapacity(9)
 
-            for stack in Stack.allCases {
+            groups.forEach { stack, majorAxisGroup in
                 var start = 0
-                for group in groups[stack].allGroups {
+                for group in majorAxisGroup.allGroups {
                     let end = start + group.count
                     let stateIndex = result.count
                     for offset in start ..< end {
@@ -1800,8 +1807,7 @@ extension JindoTripleVStack {
 
         private func distanceToCenterBottom(from offset: Int, stack: Stack) -> CGFloat {
             let centerHeader = header.stacks.center
-            guard let centerBottom = centerHeader.indices
-                .prefix(centerHeader.topPrefix)
+            guard let centerBottom = centerHeader.indices[..<centerHeader.topPrefix]
                 .last
             else {
                 return 0
@@ -1815,19 +1821,15 @@ extension JindoTripleVStack {
         }
 
         private var placementOrder: some Sequence<Int> {
-            var result = header.stacks.leading.indices
-                .prefix(header.stacks.leading.topPrefix)
+            var result = header.stacks.leading.indices[..<header.stacks.leading.topPrefix]
             result.append(
-                contentsOf: header.stacks.center.indices
-                    .prefix(header.stacks.center.topPrefix)
+                contentsOf: header.stacks.center.indices[..<header.stacks.center.topPrefix]
             )
             result.append(
-                contentsOf: header.stacks.trailing.indices
-                    .prefix(header.stacks.trailing.topPrefix)
+                contentsOf: header.stacks.trailing.indices[..<header.stacks.trailing.topPrefix]
             )
             result.append(
-                contentsOf: header.stacks.leading.indices
-                    .suffix(from: header.stacks.leading.topPrefix)
+                contentsOf: header.stacks.leading.indices[header.stacks.leading.topPrefix...]
             )
             return result
         }
@@ -1845,60 +1847,43 @@ extension JindoTripleVStack {
         }
 
         private func indexToPushBelowNotch(
-            in stack: Stack,
+            _ stack: Stack,
             availableWidth: CGFloat?,
             centerHeight: CGFloat
         ) -> Int? {
-            guard let availableWidth else {
-                return nil
-            }
-
-            let stackHeader = header.stacks[stack]
-            return (0 ..< stackHeader.topPrefix).first { offset in
-                let childIndex = stackHeader.indices[offset]
-                return isTooWideForNotch(
-                    childIndex,
-                    availableWidth: availableWidth
-                )
-                    && shouldPushBelowIfTooWide(childIndex)
-                    && bottomOf(
-                        previousChild: offset,
-                        in: stack,
-                        includeSpacing: true
-                    ) < centerHeight + distanceToCenterBottom(from: offset, stack: stack)
+            availableWidth.flatMap { availableWidth in
+                header.stacks[stack].indices[..<header.stacks[stack].topPrefix].indices.first { offset in
+                    let childIndex = header.stacks[stack].indices[offset]
+                    return isTooWideForNotch(childIndex, availableWidth: availableWidth)
+                        && shouldPushBelowIfTooWide(childIndex)
+                        && bottomOf(previousChild: offset, in: stack, includeSpacing: true)
+                            < centerHeight + distanceToCenterBottom(from: offset, stack: stack)
+                }
             }
         }
 
         private func indexToResizeInNotch(
-            in stack: Stack,
+            _ stack: Stack,
             availableWidth: CGFloat?,
             centerHeight: CGFloat
         ) -> Int? {
-            guard let availableWidth else {
+            availableWidth.flatMap { availableWidth -> Int? in
+                let stackHeader = header.stacks[stack]
+                for offset in 0 ..< stackHeader.topPrefix {
+                    let childIndex = stackHeader.indices[offset]
+                    if shouldPushBelowIfTooWide(childIndex) {
+                        break
+                    }
+                    if isTooWideForNotch(childIndex, availableWidth: availableWidth),
+                       !children[childIndex].hasBeenReduced,
+                       bottomOf(previousChild: offset, in: stack, includeSpacing: true)
+                           < centerHeight + distanceToCenterBottom(from: offset, stack: stack)
+                    {
+                        return offset
+                    }
+                }
                 return nil
             }
-
-            let stackHeader = header.stacks[stack]
-            for offset in 0 ..< stackHeader.topPrefix {
-                let childIndex = stackHeader.indices[offset]
-                if shouldPushBelowIfTooWide(childIndex) {
-                    break
-                }
-                if isTooWideForNotch(
-                    childIndex,
-                    availableWidth: availableWidth
-                ),
-                    !children[childIndex].hasBeenReduced,
-                    bottomOf(
-                        previousChild: offset,
-                        in: stack,
-                        includeSpacing: true
-                    ) < centerHeight + distanceToCenterBottom(from: offset, stack: stack)
-                {
-                    return offset
-                }
-            }
-            return nil
         }
 
         private mutating func resizeChildrenAdjacentToNotch(
@@ -1913,12 +1898,12 @@ extension JindoTripleVStack {
                 includeSpacing: false
             )
             let leadingIndex = indexToResizeInNotch(
-                in: .leading,
+                .leading,
                 availableWidth: metrics.leadingAvailableWidth,
                 centerHeight: centerHeight
             )
             let trailingIndex = indexToResizeInNotch(
-                in: .trailing,
+                .trailing,
                 availableWidth: metrics.trailingAvailableWidth,
                 centerHeight: centerHeight
             )
@@ -1952,14 +1937,13 @@ extension JindoTripleVStack {
             _ = stack
 
             for index in indices {
-                let child = children[index]
-                let padding = child.padding.in(child.paddingEdges)
-                var geometry = child.geometry
+                let padding = children[index].padding.in(children[index].paddingEdges)
+                var geometry = children[index].geometry
                 geometry.size.width -= padding.horizontal
                 geometry.size.height -= padding.vertical
                 geometry.origin.y += bounds.minY + padding.top
                 geometry.origin.x = padding.leading
-                    + (bounds.width - geometry.size.width) * minorAxisAnchor
+                    + (bounds.width - children[index].geometry.size.width) * minorAxisAnchor
                 geometry.origin.x += bounds.minX
                 header.proxies[index].place(
                     at: geometry.origin,
